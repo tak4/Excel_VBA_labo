@@ -16,6 +16,8 @@ Const SETTING_SCHEDULE_REQUIRED_FOR_INPUT_COL_CELL As String = "B10"
 Const SETTING_SCHEDULE_START_WORK_DATE_COL_CELL As String = "B11"
 Const SETTING_SCHEDULE_END_WORK_DATE_COL_CELL As String = "B12"
 Const SETTING_SCHEDULE_INPUT_WORK_DAY_CELL As String = "B13"
+Const SETTING_SCHEDULE_CORRECT_WORK_DAYS_ROW_CELL As String = "B14"
+
 
 ' 設定パラメータ
 Dim setting_wb_name As String
@@ -31,6 +33,7 @@ Dim setting_required_for_input_col As Integer
 Dim setting_start_work_date_col As Integer
 Dim setting_end_work_date_col As Integer
 Dim setting_input_work_date As Integer
+Dim setting_correct_work_days As Double
 
 ' 作業用変数
 Dim wb As Workbook
@@ -129,6 +132,7 @@ Sub Initial()
     setting_start_work_date_col = macro_ws.Range(SETTING_SCHEDULE_START_WORK_DATE_COL_CELL).Value
     setting_end_work_date_col = macro_ws.Range(SETTING_SCHEDULE_END_WORK_DATE_COL_CELL).Value
     setting_input_work_date = macro_ws.Range(SETTING_SCHEDULE_INPUT_WORK_DAY_CELL).Value
+    setting_correct_work_days = macro_ws.Range(SETTING_SCHEDULE_CORRECT_WORK_DAYS_ROW_CELL).Value
 
     ' 作業用変数初期化
     Set wb = Workbooks(setting_wb_name)
@@ -138,6 +142,7 @@ Sub Initial()
     worker_name = ws.Cells(act_row, setting_worker_col).Value
 
 End Sub
+
 
 '
 ' 期間を入力する
@@ -164,7 +169,7 @@ Attribute InputPeriod.VB_ProcData.VB_Invoke_Func = " \n14"
     required_for_input = ws.Cells(act_row, setting_required_for_input_col) - total_for_work
 
     
-    ' 工数入力 - 入力必要工数分繰り返し
+    ' 工数入力 (入力必要工数分繰り返し)
     c = 0
     Do
         ' 入力済みのセルはスキップ
@@ -176,7 +181,9 @@ Attribute InputPeriod.VB_ProcData.VB_Invoke_Func = " \n14"
         total_for_days = 0
         For r = setting_schedule_start_row To setting_schedule_end_row
             If ws.Cells(r, setting_worker_col).Value = worker_name Then
-                total_for_days = total_for_days + ws.Cells(r, act_col + c).Value
+                ' 切り上げて0になるのを防ぐ
+                total_for_days = total_for_days + WorksheetFunction.RoundUp(ws.Cells(r, act_col + c).Value, 5)
+'                total_for_days = total_for_days + ws.Cells(r, act_col + c).Value
             End If
         Next r
         
@@ -192,6 +199,9 @@ Attribute InputPeriod.VB_ProcData.VB_Invoke_Func = " \n14"
         Else
             input_work_days = can_input
         End If
+        
+        ' 更に 補正する (ちょっと営業日数より頑張るとか、頑張らないとか)
+        input_work_days = input_work_days + setting_correct_work_days
         
         ' 入力工数を入力必要工数で補正
         If required_for_input < input_work_days Then
@@ -265,6 +275,12 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     ' 丸めた結果が既に入力済みと異なる場合は更新する
     entered_start_date = Int(CDate(ws.Cells(target_row, setting_start_work_date_col).Value))
     start_date = Int(CDate(ws.Cells(setting_date_row, start_date_col).Value) + total_for_days)
+    
+    ' 土日を考慮 翌日にする
+    While Weekday(start_date) = 1 Or Weekday(start_date) = 7
+        start_date = start_date + 1
+    Wend
+    
     If entered_start_date <> start_date Then
         ws.Cells(target_row, setting_start_work_date_col).Value = start_date
         ws.Cells(target_row, setting_start_work_date_col).Font.ColorIndex = 3
@@ -284,6 +300,12 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     ' 丸めた結果が既に入力済みと異なる場合は更新する
     entered_end_date = Int(CDate(ws.Cells(target_row, setting_end_work_date_col).Value))
     end_date = Int(CDate(ws.Cells(setting_date_row, end_date_col).Value) + total_for_days)
+    
+    ' 土日を考慮 翌日にする
+    While Weekday(end_date) = 1 Or Weekday(end_date) = 7
+        end_date = end_date + 1
+    Wend
+
     If entered_end_date <> end_date Then
         ws.Cells(target_row, setting_end_work_date_col).Value = end_date
         ws.Cells(target_row, setting_end_work_date_col).Font.ColorIndex = 3
