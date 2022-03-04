@@ -89,22 +89,31 @@ Attribute CorrectionDate.VB_ProcData.VB_Invoke_Func = "C\n14"
         
         ' 開始日補正
         entered_start_date = CDate(ws.Cells(r, setting_start_work_date_col).Value)
-        correct_start_date = Int(CDate(ws.Cells(r, setting_start_work_date_col).Value))
-        ws.Cells(r, setting_start_work_date_col).Value = correct_start_date
-
-        ' 念の為の日付の変更チェック 1日未満を切り捨てるだけなので、変わらないはず
-        If ws.Cells(r, setting_start_work_date_col).Value <> Int(entered_start_date) Then
-            ws.Cells(r, setting_start_work_date_col).Font.ColorIndex = 5
+        correct_start_date = Int(entered_start_date)
+        
+        ' 入力のない日付はスキップ
+        If entered_start_date <> 0 Then
+            ws.Cells(r, setting_start_work_date_col).Value = correct_start_date
+    
+            ' 念の為の日付の変更チェック 1日未満を切り捨てるだけなので、変わらないはず
+            If ws.Cells(r, setting_start_work_date_col).Value <> Int(entered_start_date) Then
+                ws.Cells(r, setting_start_work_date_col).Font.ColorIndex = 5
+            End If
         End If
+        
         
         ' 終了日補正
         entered_end_date = CDate(ws.Cells(r, setting_end_work_date_col).Value)
-        correct_end_date = Int(CDate(ws.Cells(r, setting_end_work_date_col).Value))
-        ws.Cells(r, setting_end_work_date_col).Value = correct_end_date
+        correct_end_date = Int(entered_end_date)
         
-        ' 念の為の日付の変更チェック 1日未満を切り捨てるだけなので、変わらないはず
-        If ws.Cells(r, setting_end_work_date_col).Value <> Int(entered_end_date) Then
-            ws.Cells(r, setting_end_work_date_col).Font.ColorIndex = 5
+        ' 入力のない日付はスキップ
+        If entered_end_date <> 0 Then
+            ws.Cells(r, setting_end_work_date_col).Value = correct_end_date
+            
+            ' 念の為の日付の変更チェック 1日未満を切り捨てるだけなので、変わらないはず
+            If ws.Cells(r, setting_end_work_date_col).Value <> Int(entered_end_date) Then
+                ws.Cells(r, setting_end_work_date_col).Font.ColorIndex = 5
+            End If
         End If
     
     Next r
