@@ -7,41 +7,51 @@ Const SETTING_WB_NAME_CELL As String = "B1"
 Const SETTING_WS_NAME_CELL As String = "B2"
 Const SETTING_SCHEDULE_START_ROW_CELL As String = "B3"
 Const SETTING_SCHEDULE_END_ROW_CELL As String = "B4"
-Const SETTING_SCHEDULE_START_COL_CELL As String = "B5"
-Const SETTING_SCHEDULE_END_COL_CELL As String = "B6"
+Const SETTING_SCHEDULE_START_COL_CELL As String = "B5"  ' 計画表開始列
+Const SETTING_SCHEDULE_END_COL_CELL As String = "B6"    ' 計画表終了列
 Const SETTING_SCHEDULE_WORK_DAYS_ROW_CELL As String = "B7"
 Const SETTING_SCHEDULE_DATE_ROW_CELL As String = "B8"
 Const SETTING_SCHEDULE_WORKER_COL_CELL As String = "B9"
 Const SETTING_SCHEDULE_REQUIRED_FOR_INPUT_COL_CELL As String = "B10"
-Const SETTING_SCHEDULE_START_WORK_DATE_COL_CELL As String = "B11"
-Const SETTING_SCHEDULE_END_WORK_DATE_COL_CELL As String = "B12"
-Const SETTING_SCHEDULE_INPUT_WORK_DAY_CELL As String = "B13"
-Const SETTING_SCHEDULE_CORRECT_WORK_DAYS_ROW_CELL As String = "B14"
+Const SETTING_SCHEDULE_START_WORK_DATE_COL_CELL As String = "B11"   ' 作業開始日
+Const SETTING_SCHEDULE_END_WORK_DATE_COL_CELL As String = "B12" ' 作業終了日
+Const SETTING_SCHEDULE_BASE_WORKING_HOURS_PER_DAY_ROW_CELL As String = "B13" ' １日の作業時間(１週間平均)：基準
+Const SETTING_SCHEDULE_WORKING_HOURS_PER_DAY_ROW_CELL As String = "B14" ' １日の作業時間(１週間平均)
 
 
 ' 設定パラメータ
 Dim setting_wb_name As String
 Dim setting_ws_name As String
-Dim setting_schedule_start_row As Integer
-Dim setting_schedule_end_row As Integer
-Dim setting_schedule_start_col As Integer
-Dim setting_schedule_end_col As Integer
+Dim setting_schedule_start_row As Integer   ' 計画表開始行
+Dim setting_schedule_end_row As Integer     ' 計画表開始行
+Dim setting_schedule_start_col As Integer   ' 計画表開始列
+Dim setting_schedule_end_col As Integer     ' 計画表終了列
 Dim setting_work_days_row As Integer
 Dim setting_date_row As Integer
 Dim setting_worker_col As Integer
 Dim setting_required_for_input_col As Integer
 Dim setting_start_work_date_col As Integer
 Dim setting_end_work_date_col As Integer
-Dim setting_input_work_date As Integer
-Dim setting_correct_work_days As Double
+Dim setting_base_working_hours_per_day As Double
+Dim setting_working_hours_per_day As Double
+
 
 ' 作業用変数
 Dim wb As Workbook
 Dim macro_ws, ws As Worksheet
 
-Dim worker_name As String       ' 作業者名
-Dim work_days_for_week As Double   ' 1週間にかける工数
-Dim act_row, act_col As Integer
+Dim worker_name As String           ' 作業者名
+Dim act_row, act_col As Long
+
+' Undo用データ
+Type UndoData
+    saved_row As Integer    ' 保存済み行
+    start_work_date As Date ' 作業開始日
+    end_work_date As Date   ' 作業終了日
+    work_day() As Double    ' 入力工数
+End Type
+
+Dim undo_data As UndoData
 
 ' 休日リスト
 Const HOLIDAY_LIST_SIZE As Integer = 30
@@ -52,10 +62,10 @@ Type HolidayList
 End Type
 
 '
-' マクロエントリ：期間、開始日、終了日を入力する
+' マクロエントリ：期間を入力する
 '
-Sub InputScheduleUpdateDate()
-Attribute InputScheduleUpdateDate.VB_ProcData.VB_Invoke_Func = "D\n14"
+Sub EntryInputPeriod()
+Attribute EntryInputPeriod.VB_ProcData.VB_Invoke_Func = "S\n14"
 
     Initial
     InputPeriod
@@ -66,11 +76,21 @@ End Sub
 '
 ' マクロエントリ：開始日、終了日を入力する
 '
-Sub InputUpdateDate()
-Attribute InputUpdateDate.VB_ProcData.VB_Invoke_Func = "S\n14"
+Sub EntryInputDate()
+Attribute EntryInputDate.VB_ProcData.VB_Invoke_Func = "D\n14"
 
     Initial
     InputWorkStartEndDate (act_row)
+
+End Sub
+
+'
+' マクロエントリ：Undoデータ読み出し
+'
+Sub EntryLoadUndoData()
+Attribute EntryLoadUndoData.VB_ProcData.VB_Invoke_Func = "Z\n14"
+
+    LoadUndoData
 
 End Sub
 
@@ -78,8 +98,8 @@ End Sub
 '
 ' マクロエントリ：開始日、終了日補正(1日未満の日付入力を切り捨てる)
 '
-Sub CorrectionDate()
-Attribute CorrectionDate.VB_ProcData.VB_Invoke_Func = "C\n14"
+Sub EntryCorrectionDate()
+Attribute EntryCorrectionDate.VB_ProcData.VB_Invoke_Func = "C\n14"
     Dim r As Integer
     Dim correct_start_date, entered_start_date As Date  ' 作業開始日付
     Dim correct_end_date, entered_end_date As Date      ' 作業終了日付
@@ -91,7 +111,7 @@ Attribute CorrectionDate.VB_ProcData.VB_Invoke_Func = "C\n14"
         entered_start_date = CDate(ws.Cells(r, setting_start_work_date_col).Value)
         correct_start_date = Int(entered_start_date)
         
-        ' 入力のない日付はスキップ
+        ' 入力の無い日付はスキップ
         If entered_start_date <> 0 Then
             ws.Cells(r, setting_start_work_date_col).Value = correct_start_date
     
@@ -106,7 +126,7 @@ Attribute CorrectionDate.VB_ProcData.VB_Invoke_Func = "C\n14"
         entered_end_date = CDate(ws.Cells(r, setting_end_work_date_col).Value)
         correct_end_date = Int(entered_end_date)
         
-        ' 入力のない日付はスキップ
+        ' 入力の無い日付はスキップ
         If entered_end_date <> 0 Then
             ws.Cells(r, setting_end_work_date_col).Value = correct_end_date
             
@@ -125,6 +145,8 @@ End Sub
 ' 初期化
 '
 Sub Initial()
+    
+    Dim undo_work_day_array_num As Integer  ' Redo 工数配列数
 
     ' 設定パラメータ 初期化
     Set macro_ws = ThisWorkbook.Worksheets(SCHEDULE_SETTING_SHEET)
@@ -140,8 +162,8 @@ Sub Initial()
     setting_required_for_input_col = macro_ws.Range(SETTING_SCHEDULE_REQUIRED_FOR_INPUT_COL_CELL).Value
     setting_start_work_date_col = macro_ws.Range(SETTING_SCHEDULE_START_WORK_DATE_COL_CELL).Value
     setting_end_work_date_col = macro_ws.Range(SETTING_SCHEDULE_END_WORK_DATE_COL_CELL).Value
-    setting_input_work_date = macro_ws.Range(SETTING_SCHEDULE_INPUT_WORK_DAY_CELL).Value
-    setting_correct_work_days = macro_ws.Range(SETTING_SCHEDULE_CORRECT_WORK_DAYS_ROW_CELL).Value
+    setting_base_working_hours_per_day = macro_ws.Range(SETTING_SCHEDULE_BASE_WORKING_HOURS_PER_DAY_ROW_CELL).Value
+    setting_working_hours_per_day = macro_ws.Range(SETTING_SCHEDULE_WORKING_HOURS_PER_DAY_ROW_CELL).Value
 
     ' 作業用変数初期化
     Set wb = Workbooks(setting_wb_name)
@@ -149,6 +171,12 @@ Sub Initial()
     act_row = ActiveCell.Row
     act_col = ActiveCell.Column
     worker_name = ws.Cells(act_row, setting_worker_col).Value
+    
+    undo_work_day_array_num = setting_schedule_end_col - setting_schedule_start_col + 1
+    undo_data.saved_row = 0
+    undo_data.start_work_date = 0
+    undo_data.end_work_date = 0
+    ReDim undo_data.work_day(undo_work_day_array_num)
 
 End Sub
 
@@ -161,23 +189,25 @@ Attribute InputPeriod.VB_ProcData.VB_Invoke_Func = " \n14"
 
     Dim r, c, n, i As Integer
     
-    Dim total_for_days As Double       ' 入力済み工数(日)
-    Dim total_for_work As Double       ' 入力済み工数(作業)
-    Dim required_for_input As Double ' 入力必要工数
-    Dim can_input As Double           ' 入力可能工数
-    Dim input_work_days As Double  ' 入力工数
+    Dim total_for_work As Double        ' 入力済み工数(作業：行)
+    Dim total_for_days As Double        ' 入力済み工数(日：列)
+    
+    Dim required_for_input As Double    ' 入力必要工数
+    Dim work_days_for_week As Double    ' １週間にかける工数
+    Dim input_work_days As Double       ' 入力工数
+    
+    ' 期間のUndoDataを保存
+    SaveUndoData
         
-    ' 入力基準工数
-    work_days_for_week = setting_input_work_date
-
-    ' 残りの入力必要工数取得 入力必要工数から入力済み工数を引く
+    ' 入力済み工数(作業：行方向合計)取得
     total_for_work = 0
     For c = setting_schedule_start_col To setting_schedule_end_col
         total_for_work = total_for_work + ws.Cells(act_row, c).Value
     Next c
+    
+    ' 残りの入力必要工数取得 入力必要工数から入力済み工数(日：行方向合計)を引く
     required_for_input = ws.Cells(act_row, setting_required_for_input_col) - total_for_work
 
-    
     ' 工数入力 (入力必要工数分繰り返し)
     c = 0
     Do
@@ -186,38 +216,32 @@ Attribute InputPeriod.VB_ProcData.VB_Invoke_Func = " \n14"
             GoTo CONTINUE
         End If
     
-        ' 入力済み工数(日)
+        ' 入力工数を残りの入力必要工数で初期化
+        input_work_days = required_for_input
+        
+        ' 入力済み工数(日：列合計)取得
         total_for_days = 0
         For r = setting_schedule_start_row To setting_schedule_end_row
             If ws.Cells(r, setting_worker_col).Value = worker_name Then
                 ' 切り上げて0になるのを防ぐ
-                total_for_days = total_for_days + WorksheetFunction.RoundUp(ws.Cells(r, act_col + c).Value, 5)
-'                total_for_days = total_for_days + ws.Cells(r, act_col + c).Value
+'                total_for_days = total_for_days + WorksheetFunction.RoundUp(ws.Cells(r, act_col + c).Value, 2)
+                total_for_days = total_for_days + ws.Cells(r, act_col + c).Value
             End If
         Next r
         
-        ' 入力可能工数(日)：営業日から入力済み工数(日)を引く
-        can_input = ws.Cells(setting_work_days_row, act_col + c).Value - total_for_days
-        If can_input < 0 Then
-            can_input = 0
-        End If
+        ' １週間にかける工数を算出 １日にかける工数で補正する
+        work_days_for_week = ws.Cells(setting_work_days_row, act_col + c).Value * _
+            (setting_working_hours_per_day / setting_base_working_hours_per_day)
         
-        ' 入力工数を入力可能工数(日)で補正
-        If can_input > work_days_for_week Then
+        ' １週間にかける工数を補正 入力済み工数(日：列合計)を引くことで残り入力可能な工数となる
+        work_days_for_week = work_days_for_week - total_for_days
+        
+        ' 入力工数補正：１週間にかける工数を超えている場合は、１週間にかける工数に丸める
+        If input_work_days > work_days_for_week Then
             input_work_days = work_days_for_week
-        Else
-            input_work_days = can_input
         End If
         
-        ' 更に 補正する (ちょっと営業日数より頑張るとか、頑張らないとか)
-        input_work_days = input_work_days + setting_correct_work_days
-        
-        ' 入力工数を入力必要工数で補正
-        If required_for_input < input_work_days Then
-            input_work_days = required_for_input
-        End If
-                
-        ' 工数入力
+        ' 入力工数 を入力する
         If input_work_days > 0 Then
             ' 入力
             ws.Cells(act_row, act_col + c).Value = input_work_days
@@ -238,7 +262,7 @@ End Sub
 '
 ' 作業開始日/終了日入力
 '
-Sub InputWorkStartEndDate(ByVal target_row As Integer)
+Sub InputWorkStartEndDate(ByVal target_row As Long)
     
     Dim r, c As Integer ' Loop用
     
@@ -246,6 +270,7 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     Dim end_date_col As Integer     ' 作業終了週の列
     Dim total_for_days As Double    ' 入力済み工数(日)
     
+    Dim correct_date As Date
     Dim start_date, entered_start_date As Date  ' 作業開始日付
     Dim end_date, entered_end_date As Date      ' 作業終了日付
 
@@ -270,7 +295,7 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     
     ' 開始日 他作業の入力済み工数を考慮して開始日を決める
     
-    ' 作業開始週の入力済み工数(対象作業を除外)を取得
+    ' 作業開始週の他作業の入力済み工数を取得
     total_for_days = 0
     For r = setting_schedule_start_row To setting_schedule_end_row
         If ws.Cells(r, setting_worker_col).Value = worker_name Then
@@ -279,6 +304,9 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
             End If
         End If
     Next r
+
+    ' 他作業の入力済み工数を１日にかける工数で補正する
+    total_for_days = total_for_days * (setting_base_working_hours_per_day / setting_working_hours_per_day)
 
     ' 1日未満の時間は切り捨てたいのでIntで丸める
     ' 丸めた結果が既に入力済みと異なる場合は更新する
@@ -297,7 +325,7 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     
     ' 終了日 入力済み工数を考慮して終了日を決める
     
-    ' 作業終了週の入力済み工数(対象作業を含む)を取得
+    ' 作業終了週の他作業の入力済み工数を取得
     total_for_days = 0
     For r = setting_schedule_start_row To setting_schedule_end_row
         If ws.Cells(r, setting_worker_col).Value = worker_name Then
@@ -305,6 +333,9 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
         End If
     Next r
     
+    ' 他作業の入力済み工数を１日にかける工数で補正する
+    total_for_days = total_for_days * (setting_base_working_hours_per_day / setting_working_hours_per_day)
+
     ' 1日未満の時間は切り捨てたいのでIntで丸める
     ' 丸めた結果が既に入力済みと異なる場合は更新する
     entered_end_date = Int(CDate(ws.Cells(target_row, setting_end_work_date_col).Value))
@@ -322,6 +353,68 @@ Sub InputWorkStartEndDate(ByVal target_row As Integer)
     
 SKIP_INPUT_DATE:
     
+End Sub
+
+'
+' マクロエントリ：UnDoデータ保存
+'
+Sub SaveUndoData()
+    Dim i As Integer
+    
+    If act_row > setting_schedule_end_row Then
+        Exit Sub
+    End If
+
+    ' 作業開始日／作業終了日を保存
+    undo_data.start_work_date = ws.Cells(act_row, setting_start_work_date_col).Value
+    undo_data.end_work_date = ws.Cells(act_row, setting_end_work_date_col).Value
+
+    ' 期間工数を保存
+    For i = 0 To UBound(undo_data.work_day) - 1
+        undo_data.work_day(i) = ws.Cells(act_row, setting_schedule_start_col + i).Value
+    Next i
+    
+    ' 保存済み行設定
+    undo_data.saved_row = act_row
+
+End Sub
+
+'
+' UnDoデータ読み出し
+'
+Sub LoadUndoData()
+Attribute LoadUndoData.VB_ProcData.VB_Invoke_Func = "Z\n14"
+    Dim i As Integer
+
+    If undo_data.saved_row = act_row Then
+    
+        ' 作業開始日／作業終了日を保存
+        If undo_data.start_work_date <> 0 Then
+            ws.Cells(undo_data.saved_row, setting_start_work_date_col).Value = undo_data.start_work_date
+        Else
+            ws.Cells(undo_data.saved_row, setting_start_work_date_col).Value = ""
+        End If
+        
+        If undo_data.end_work_date <> 0 Then
+            ws.Cells(undo_data.saved_row, setting_end_work_date_col).Value = undo_data.end_work_date
+        Else
+            ws.Cells(undo_data.saved_row, setting_end_work_date_col).Value = ""
+        End If
+    
+        ' 期間工数を保存
+        For i = 0 To UBound(undo_data.work_day) - 1
+            If undo_data.work_day(i) <> 0 Then
+                ws.Cells(undo_data.saved_row, setting_schedule_start_col + i).Value = undo_data.work_day(i)
+            Else
+                ws.Cells(undo_data.saved_row, setting_schedule_start_col + i).Value = ""
+            End If
+        Next i
+        
+        ' 保存済み行クリア
+        undo_data.saved_row = 0
+    
+    End If
+
 End Sub
 
 
